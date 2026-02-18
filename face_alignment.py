@@ -17,6 +17,8 @@ MOUTH_LEFT = 61
 MOUTH_RIGHT = 291
 CHIN = 152
 FOREHEAD = 10
+LEFT_EAR = 234   # NEW: Left ear tragus (the small pointed eminence of the external ear)
+RIGHT_EAR = 454  # NEW: Right ear tragus
 
 class FaceAlignmentDetector:
     """Detector for face alignment and orientation"""
@@ -79,6 +81,10 @@ class FaceAlignmentDetector:
         chin = to_pixel(landmarks[CHIN])
         forehead = to_pixel(landmarks[FOREHEAD])
         
+        # NEW: Get ear landmarks
+        left_ear = to_pixel(landmarks[LEFT_EAR])
+        right_ear = to_pixel(landmarks[RIGHT_EAR])
+        
         # Calculate key centers
         eye_center = (left_eye + right_eye) / 2
         mouth_center = (mouth_left + mouth_right) / 2
@@ -114,6 +120,8 @@ class FaceAlignmentDetector:
             'eye_center': eye_center,
             'left_eye': left_eye,
             'right_eye': right_eye,
+            'left_ear': left_ear,      # NEW
+            'right_ear': right_ear,    # NEW
             'nose': nose_tip,
             'mouth_center': mouth_center,
             'chin': chin,

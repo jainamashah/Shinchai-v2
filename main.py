@@ -10,6 +10,7 @@ from shoulder_alignment import (ShoulderAlignmentDetector, draw_shoulder_lines,
                                 draw_shoulder_skeleton, draw_shoulder_info)
 from bounding_box import BoundingBoxDrawer
 from background_checker import BackgroundChecker
+from passport_capture import PassportPhotoCapturer
 
 class PhotoQualityChecker:
     """Main class for checking photo quality"""
@@ -22,6 +23,9 @@ class PhotoQualityChecker:
         self.background_checker = BackgroundChecker()  # NEW
         self.checks = []
         self.results = {}
+        self.passport_capturer = PassportPhotoCapturer(output_size=(350, 450))
+        self.latest_passport_ready = False
+        self.latest_passport_corners = None
     
     def check_face_alignment(self, frame, 
                             yaw_threshold=15,
@@ -140,6 +144,9 @@ class PhotoQualityChecker:
         # Check if both tests passed
         both_passed = results.get('overall_passed', False)
         is_ready_for_capture = False  # NEW: Initialize the flag
+        # Default to no capture info each frame
+        self.latest_passport_ready = False
+        self.latest_passport_corners = None
         
         if both_passed:
             # Draw ONLY the passport-style box when both checks pass
@@ -152,12 +159,16 @@ class PhotoQualityChecker:
                 shoulder_data = results['shoulder_alignment']['person_data']
                 
                 # CHANGED: Capture the return value (tuple now)
-                vis_frame, is_ready_for_capture = self.bbox_drawer.draw_passport_box(
+                vis_frame, is_ready_for_capture, corners = self.bbox_drawer.draw_passport_box(
                     vis_frame,
                     face_data,
                     shoulder_data,
-                    check_frame_fit=True  # Enable edge checking
+                    check_frame_fit=True
                 )
+
+                # Save latest state so main() can capture when user presses a button
+                self.latest_passport_ready = bool(is_ready_for_capture)
+                self.latest_passport_corners = corners
         else:
             # Draw detailed visualizations when checks haven't passed
             if show_details:
@@ -364,6 +375,20 @@ def main():
         elif key == ord('d'):  # Toggle details
             show_details = not show_details
             print(f"Detailed view: {'ON' if show_details else 'OFF'}")
+        elif key == ord('p'):
+            if checker.latest_passport_corners is not None:
+                passport_img = checker.passport_capturer.extract_passport_photo(
+                    frame,  # IMPORTANT: use the clean frame, not vis_frame (which has drawings)
+                    checker.latest_passport_corners
+                )
+
+                filename = f"passport_{frame_count}.png"
+                cv2.imwrite(filename, passport_img)
+                cv2.imshow("Passport Photo", passport_img)
+                print(f"\nCaptured passport photo: {filename}")
+                frame_count += 1
+            else:
+                print("\nNot ready: wait for 'READY TO CAPTURE' before pressing 'p'.")
     
     # Cleanup
     cap.release()

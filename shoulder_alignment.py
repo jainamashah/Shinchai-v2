@@ -153,7 +153,7 @@ class ShoulderAlignmentDetector:
         """
         return abs(shoulder_tilt) <= threshold
     
-    def is_shoulders_square(self, shoulder_depth_ratio, threshold=0.2):
+    def is_shoulders_square(self, shoulder_depth_ratio, threshold=0.3):
         """
         Check if shoulders are square to camera (not rotated)
         

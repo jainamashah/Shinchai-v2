@@ -14,58 +14,77 @@ class BoundingBoxDrawer:
         """Initialize the bounding box drawer"""
         pass
 
-    def draw_passport_box(self, frame, face_data, shoulder_data, check_frame_fit=True):
+    def draw_passport_box(self, frame, face_data, shoulder_data=None, check_frame_fit=True):
         """
         Draw a passport-style 2D box with 35:45 (width:height) ratio
-        that includes face and both shoulders.
-        Only drawn when both face and shoulder alignment checks pass.
+        centered on the nose, with width based on ear positions.
+        
+        Dimensions:
+        - Width: ear-to-ear distance + 2 * (ear-to-eye-center distance)
+        - Height: calculated from 35:45 ratio
+        - Center: positioned on nose
         
         Args:
             frame: Image to draw on
             face_data: Face orientation data containing landmarks
-            shoulder_data: Shoulder data containing shoulder positions
+            shoulder_data: Shoulder data (optional, not used for dimensions)
             check_frame_fit: If True, only show "ready" when box edges touch frame edges
             
         Returns:
             Tuple of (frame with passport box drawn, is_ready_for_capture)
         """
-        # Get key points
-        left_shoulder = shoulder_data['left_shoulder'][:2]
-        right_shoulder = shoulder_data['right_shoulder'][:2]
-        forehead = face_data['forehead'][:2]
-        chin = face_data['chin'][:2]
+        # Get key facial landmarks
+        nose = face_data['nose'][:2]
+        left_eye = face_data['left_eye'][:2]
+        right_eye = face_data['right_eye'][:2]
         
-        # Calculate the center point between face and shoulders
-        face_center = (forehead + chin) / 2
-        shoulder_center = (left_shoulder + right_shoulder) / 2
-        box_center = (face_center + shoulder_center) / 2
+        # Get ear positions (need to extract from face_data)
+        # Assuming MediaPipe face mesh provides ear landmarks
+        # If not available, we'll estimate from face geometry
+        if 'left_ear' in face_data and 'right_ear' in face_data:
+            left_ear = face_data['left_ear'][:2]
+            right_ear = face_data['right_ear'][:2]
+        else:
+            # Estimate ear positions based on face geometry
+            # Ears are typically at eye level, outside the face
+            eye_center = (left_eye + right_eye) / 2
+            eye_distance = np.linalg.norm(right_eye - left_eye)
+            
+            # Estimate ears at ~1.5x eye distance from eye center
+            face_angle = np.arctan2(right_eye[1] - left_eye[1], right_eye[0] - left_eye[0])
+            perpendicular_angle = face_angle + np.pi / 2
+            
+            # Ears are roughly at eye level, outside the face width
+            ear_offset = eye_distance * 1.5
+            left_ear = left_eye + np.array([-ear_offset * np.cos(face_angle), 
+                                            -ear_offset * np.sin(face_angle)])
+            right_ear = right_eye + np.array([ear_offset * np.cos(face_angle), 
+                                            ear_offset * np.sin(face_angle)])
         
-        # Calculate required width to include both shoulders with some padding
-        shoulder_width = np.linalg.norm(right_shoulder - left_shoulder)
-        required_width = shoulder_width * 1.4  # Add 40% padding
+        # Calculate box dimensions based on ears
+        ear_to_ear_distance = np.linalg.norm(right_ear - left_ear)
+        eye_center = (left_eye + right_eye) / 2
         
-        # Calculate height based on 35:45 ratio (45/35 = 1.2857)
-        aspect_ratio = 45.0 / 35.0
-        box_width = required_width
+        # Distance from ear to eye center (we'll use left ear as reference)
+        ear_to_eye_center = np.linalg.norm(left_ear - eye_center)
+        
+        # Box width: ear-to-ear + 2 * (ear-to-eye-center)
+        box_width = ear_to_ear_distance + 2 * ear_to_eye_center
+        
+        # Calculate height based on 35:45 ratio
+        aspect_ratio = 45.0 / 35.0  # height / width
         box_height = box_width * aspect_ratio
         
-        # Ensure the box includes face top and bottom with padding
-        face_height = np.linalg.norm(forehead - chin)
-        shoulder_to_forehead = np.linalg.norm(shoulder_center - forehead)
-        required_height = shoulder_to_forehead + face_height * 1.5
-        
-        # Use the larger of the two heights
-        if required_height > box_height:
-            box_height = required_height
-            box_width = box_height / aspect_ratio
+        # Box center is at the nose
+        box_center = nose.copy()
         
         # Calculate box corners
         half_width = box_width / 2
         half_height = box_height / 2
         
-        # Calculate rotation angle from shoulder line
-        shoulder_vector = right_shoulder - left_shoulder
-        rotation_angle = np.arctan2(shoulder_vector[1], shoulder_vector[0])
+        # Calculate rotation angle from eye line (to handle head tilt)
+        eye_vector = right_eye - left_eye
+        rotation_angle = np.arctan2(eye_vector[1], eye_vector[0])
         
         # Create rotation matrix
         cos_angle = np.cos(rotation_angle)
@@ -87,12 +106,12 @@ class BoundingBoxDrawer:
         
         corners_rotated = np.dot(corners_relative, rotation_matrix.T)
         
-        # Translate to box center
+        # Translate to box center (nose position)
         corners = corners_rotated + box_center
         corners = corners.astype(np.int32)
         
         # ============================================
-        # NEW: Check if PARALLEL OPPOSITE edges touch frame edges
+        # Check if PARALLEL OPPOSITE edges touch frame edges
         # ============================================
         frame_height, frame_width = frame.shape[:2]
         edge_threshold = 20  # pixels - how close to edge counts as "touching"
@@ -101,11 +120,6 @@ class BoundingBoxDrawer:
         
         if check_frame_fit:
             # Define the four edges of the passport box
-            # Edge 0: Top (corners[0] to corners[1])
-            # Edge 1: Right (corners[1] to corners[2])
-            # Edge 2: Bottom (corners[2] to corners[3])
-            # Edge 3: Left (corners[3] to corners[0])
-            
             edges = [
                 (corners[0], corners[1]),  # Top edge
                 (corners[1], corners[2]),  # Right edge
@@ -161,7 +175,35 @@ class BoundingBoxDrawer:
         for corner in corners:
             cv2.circle(frame, tuple(corner), corner_size, box_color, -1)
         
-        # Add dimension annotations
+        # Draw reference markers (optional - for debugging)
+        if not is_ready_for_capture:
+            # Draw nose center (red dot)
+            cv2.circle(frame, tuple(nose.astype(int)), 8, (0, 0, 255), -1)
+            cv2.circle(frame, tuple(nose.astype(int)), 10, (0, 0, 255), 2)
+            
+            # Draw ear positions (cyan dots)
+            cv2.circle(frame, tuple(left_ear.astype(int)), 6, (255, 255, 0), -1)
+            cv2.circle(frame, tuple(right_ear.astype(int)), 6, (255, 255, 0), -1)
+            
+            # Draw ear-to-ear line
+            cv2.line(frame, 
+                    tuple(left_ear.astype(int)), 
+                    tuple(right_ear.astype(int)), 
+                    (255, 255, 0), 1)
+            
+            # Draw center crosshair at nose
+            crosshair_size = 15
+            nose_int = nose.astype(int)
+            cv2.line(frame, 
+                    (nose_int[0] - crosshair_size, nose_int[1]),
+                    (nose_int[0] + crosshair_size, nose_int[1]),
+                    (0, 0, 255), 1)
+            cv2.line(frame, 
+                    (nose_int[0], nose_int[1] - crosshair_size),
+                    (nose_int[0], nose_int[1] + crosshair_size),
+                    (0, 0, 255), 1)
+        
+        # Add dimension annotations (35mm x 45mm style)
         self._draw_dimension_labels(frame, corners, box_width, box_height)
         
         # Only draw "ALIGNED" stamp if ready for capture
@@ -173,7 +215,8 @@ class BoundingBoxDrawer:
                                             top_touches, right_touches, 
                                             bottom_touches, left_touches)
         
-        return frame, is_ready_for_capture
+        return frame, is_ready_for_capture, corners
+
 
     def _edge_touches_frame_boundary(self, edge, frame_width, frame_height, 
                                     boundary_side, threshold):
